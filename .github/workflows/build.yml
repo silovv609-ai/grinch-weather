@@ -13,6 +13,10 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-22.04
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,20 +27,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK tools
-        uses: android-actions/setup-android@v3
-
       - name: Accept Android SDK licenses
         shell: bash
         run: |
-          set +e
-          yes | sdkmanager --licenses
-          true
+          set +o pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+          set -o pipefail
 
       - name: Install Android SDK packages
         shell: bash
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --install "platforms;android-35" "build-tools;35.0.0"
 
       - name: Find and extract project ZIP
         shell: bash
@@ -46,7 +48,7 @@ jobs:
           ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*14days*wind*direction*.zip' -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Weather project ZIP not found in repository root."
+            echo "ERROR: Weather project ZIP was not found."
             exit 1
           fi
 
@@ -56,7 +58,7 @@ jobs:
           SETTINGS_FILE="$(find source -name settings.gradle.kts -print -quit)"
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: settings.gradle.kts not found in ZIP."
+            echo "ERROR: settings.gradle.kts was not found in the ZIP."
             exit 1
           fi
 
@@ -68,7 +70,6 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build APK
-        shell: bash
         run: gradle assembleDebug
         working-directory: ${{ env.PROJECT_DIR }}
 
@@ -78,4 +79,3 @@ jobs:
           name: grinch-weather-apk
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          
