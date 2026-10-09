@@ -1,4 +1,4 @@
-name: Build weather APK
+name: Build Weather APK
 
 on:
 workflow_dispatch:
