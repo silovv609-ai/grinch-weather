@@ -4,12 +4,13 @@ name: Build Weather APK
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'GrinchWeatherWidget_24h_14days_wind_direction.zip'
-      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -20,33 +21,54 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
 
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Find and extract project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*14days*wind*direction*.zip' -print -quit)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Weather project ZIP was not found in the repository root."
+            echo "Upload the weather project ZIP to the main repository page."
+            exit 1
+          fi
+
+          mkdir -p source
+          unzip -o "$ZIP_FILE" -d source
+
+          PROJECT_FILE="$(find source -name settings.gradle.kts -print -quit)"
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "ERROR: settings.gradle.kts was not found inside the ZIP."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$(dirname "$PROJECT_FILE")" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
-      - name: Extract project
-        run: unzip -o GrinchWeatherWidget_24h_14days_wind_direction.zip -d source
-
-      - name: Check project folder
-        run: ls -la source/GrinchWeatherWidget
-
-      - name: Build APK
-        working-directory: source/GrinchWeatherWidget
+      - name: Build debug APK
         run: gradle assembleDebug
+        working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: grinch-weather-apk
-          path: source/GrinchWeatherWidget/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
