@@ -4,6 +4,8 @@ name: Build Weather APK
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -13,10 +15,6 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-22.04
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,57 +23,91 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          set +o pipefail
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
-          set -o pipefail
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Extract weather project
         shell: bash
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            --install "platforms;android-35" "build-tools;35.0.0"
+          set -e
 
-      - name: Find and extract project ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*14days*wind*direction*.zip' -print -quit)"
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Weather project ZIP was not found."
+            echo "ERROR: ZIP archive not found"
             exit 1
           fi
 
           mkdir -p source
-          unzip -o "$ZIP_FILE" -d source
+          unzip -q "$ZIP_FILE" -d source
 
-          SETTINGS_FILE="$(find source -name settings.gradle.kts -print -quit)"
+          SETTINGS_FILE=$(find source -name settings.gradle.kts -print -quit)
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: settings.gradle.kts was not found in the ZIP."
+            echo "ERROR: Android project not found"
             exit 1
           fi
 
-          echo "PROJECT_DIR=$(dirname "$SETTINGS_FILE")" >> "$GITHUB_ENV"
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Fix Java and Kotlin compatibility
+        shell: bash
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path(os.environ["PROJECT_DIR"])
+
+          for file in root.rglob("build.gradle.kts"):
+              text = file.read_text(encoding="utf-8")
+
+              text = re.sub(
+                  r'JavaVersion\.VERSION_1_8',
+                  'JavaVersion.VERSION_17',
+                  text
+              )
+
+              text = re.sub(
+                  r'JavaVersion\.VERSION_11',
+                  'JavaVersion.VERSION_17',
+                  text
+              )
+
+              text = re.sub(
+                  r'jvmTarget\s*=\s*"[^"]+"',
+                  'jvmTarget = "17"',
+                  text
+              )
+
+              file.write_text(text, encoding="utf-8")
+              print("Updated:", file)
+          PY
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: '8.9'
 
       - name: Build APK
-        run: gradle assembleDebug
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: grinch-weather-apk
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          
