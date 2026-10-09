@@ -15,6 +15,10 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-22.04
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,12 +29,28 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -e
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -f "$SDKMANAGER" ]; then
+            echo "ERROR: Android SDK manager not found"
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
 
       - name: Install Android SDK packages
+        shell: bash
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          set -e
+
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Extract weather project
         shell: bash
@@ -55,7 +75,10 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project found: $PROJECT_DIR"
 
       - name: Fix Java and Kotlin compatibility
         shell: bash
@@ -70,28 +93,35 @@ jobs:
           root = Path(os.environ["PROJECT_DIR"])
 
           for file in root.rglob("build.gradle.kts"):
-              text = file.read_text(encoding="utf-8")
+              content = file.read_text(encoding="utf-8")
 
-              text = re.sub(
+              content = re.sub(
                   r'JavaVersion\.VERSION_1_8',
                   'JavaVersion.VERSION_17',
-                  text
+                  content
               )
 
-              text = re.sub(
+              content = re.sub(
                   r'JavaVersion\.VERSION_11',
                   'JavaVersion.VERSION_17',
-                  text
+                  content
               )
 
-              text = re.sub(
+              content = re.sub(
                   r'jvmTarget\s*=\s*"[^"]+"',
                   'jvmTarget = "17"',
-                  text
+                  content
               )
 
-              file.write_text(text, encoding="utf-8")
-              print("Updated:", file)
+              content = re.sub(
+                  r'jvmTarget\.set\(JvmTarget\.JVM_[0-9_]+\)',
+                  'jvmTarget.set(JvmTarget.JVM_17)',
+                  content
+              )
+
+              file.write_text(content, encoding="utf-8")
+              print("Checked:", file)
+
           PY
 
       - name: Set up Gradle
@@ -102,7 +132,8 @@ jobs:
       - name: Build APK
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle assembleDebug --stacktrace
+        run: |
+          gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -110,4 +141,3 @@ jobs:
           name: grinch-weather-apk
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          
